@@ -4,6 +4,7 @@ import android.content.Context
 import android.os.Build
 import android.util.Log
 import androidx.annotation.NonNull
+import androidx.annotation.RequiresApi
 import com.bobbyesp.commonutilities.SharedPrefsHelper
 import com.bobbyesp.commonutilities.utils.ZipUtilities
 import com.bobbyesp.library.dto.Song
@@ -30,6 +31,14 @@ open class SpotDL {
 
     //lib.so.6: https://www.golinuxcloud.com/how-do-i-install-the-linux-library-libc-so-6/
     //Because: ImportError: dlopen failed: library "libc.so.6" not found: needed by /data/data/com.bobbyesp.spotdl_android/no_backup/spotdl_android/packages/python/usr/lib/python3.8/site-packages/pydantic/__init__.cpython-38.so in namespace (default)
+
+    //TODO: FIX this 2023-01-07 02:11:33.639 17963-18011 SpotDL                  com.bobbyesp.spotdl_android          D  Cleaned output --------------------------------------
+    //2023-01-07 02:11:33.639 17963-18011 SpotDL                  com.bobbyesp.spotdl_android          D  Stdout:
+    //2023-01-07 02:11:33.639 17963-18011 SpotDL                  com.bobbyesp.spotdl_android          E  Stderr:
+    //2023-01-07 02:11:33.639 17963-18011 SpotDL                  com.bobbyesp.spotdl_android          D  ------------------------------------------------------------------------------
+    //2023-01-07 02:11:33.639 17963-18011 SpotDL                  com.bobbyesp.spotdl_android          D  Raw output --------------------------------------
+    //2023-01-07 02:11:33.639 17963-18011 SpotDL                  com.bobbyesp.spotdl_android          D  Stdout:
+    //2023-01-07 02:11:33.639 17963-18011 SpotDL                  com.bobbyesp.spotdl_android          E  Stderr: 
 
     val baseName = "spotdl_android"
 
@@ -292,9 +301,17 @@ open class SpotDL {
         if(isDebug) Log.d("SpotDL", "Out stream: $outStream")
         if(isDebug) Log.d("SpotDL", "Err stream: $errStream")
 
-        val stdOutProcessor = StreamProcessExtractor(
+        //1 - Default
+        /*val stdOutProcessor = StreamProcessExtractor(
             outBuffer,
             outStream,
+            callback
+        )*/
+
+        //2 - Test
+        val stdOutProcessor = com.bobbyesp.library.tests.StreamProcessExtractor(
+            errBuffer,
+            errStream,
             callback
         )
 
@@ -336,6 +353,8 @@ open class SpotDL {
         spotDLResponse = SpotDLResponse(command, exitCode, elapsedTime, outClean, errClean)
 
         if(BuildConfig.DEBUG) {
+            //INFO/WARN: THE OUT IS EMPTY BECAUSE THE LAST LINE PROVIDED BY THE STREAMPROCESSEXTRACTOR IS EMPTY. Deleting it should make the out/err appear.
+            //Update: It doesn't work that way but I think it's that it makes sense. Need to review and compare with youtubedl-android lib.
             Log.d("SpotDL", "Stdout: $outClean")
             Log.e("SpotDL", "Stderr: $errClean")
             Log.d(
@@ -347,6 +366,68 @@ open class SpotDL {
         }
 
         return spotDLResponse
+    }
+    @JvmOverloads
+    @Throws(Exception::class)
+    fun usePythonCommand(command: String, callback: ((Float, Long, String) -> Unit)? = null): SpotDLResponse {
+        assertInit()
+
+        val response: SpotDLResponse
+        val process: Process
+        val command = mutableListOf<String>()
+        command.addAll(listOf(pythonPath!!.absolutePath))
+
+        val outBuffer = StringBuffer() //stdout
+
+        val errBuffer = StringBuffer() //stderr
+
+        var exitCode: Int = 0
+
+        val processBuilder = ProcessBuilder(command)
+        val env = processBuilder.environment()
+        env["LD_LIBRARY_PATH"] = ENV_LD_LIBRARY_PATH!!
+        env["SSL_CERT_FILE"] = ENV_SSL_CERT_FILE!!
+        env["PATH"] = System.getenv("PATH")!! + ":" + binDir!!.absolutePath + ":" + ffmpegPath!!.absolutePath
+        env["PYTHONHOME"] = ENV_PYTHONHOME!!
+        env["HOME"] = HOME!!
+
+        process = try {
+            processBuilder.start()
+        } catch (e: IOException) {
+            throw Exception("Error starting process", e)
+        }
+
+        val outStream: InputStream = process.inputStream
+        val errStream: InputStream = process.errorStream
+        if(isDebug) Log.d("SpotDL", "PythonOnly - Out stream: $outStream")
+        if(isDebug) Log.d("SpotDL", "PythonOnly - Err stream: $errStream")
+
+        val stdOutProcessor = StreamProcessExtractor(
+            outBuffer,
+            outStream,
+            callback
+        )
+
+        val stdErrProcessor = StreamGobbler(
+            errBuffer,
+            errStream
+        )
+
+        exitCode = try {
+            stdOutProcessor.join()
+            stdErrProcessor.join()
+            process.waitFor()
+        } catch (e: Exception){
+            process.destroy()
+            throw e
+        }
+
+        val out = outBuffer.toString()
+        val err = errBuffer.toString()
+
+        response = SpotDLResponse(command, exitCode, 1, out, err)
+
+        return response
     }
 
     @Throws(SpotDLException::class, InterruptedException::class)

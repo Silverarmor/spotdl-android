@@ -89,7 +89,7 @@ class HomeViewModel @Inject constructor() : ViewModel() {
 
                     val request = SpotDLRequest()
                     request.addOption("download", link)
-                    request.addOption("--log-level", "DEBUG")
+                    //request.addOption("--log-level", "DEBUG")
                     //request.addOption("--simple-tui")
                     request.addOption("--output", downloadDir.absolutePath)
                     val processId = UUID.randomUUID().toString()
